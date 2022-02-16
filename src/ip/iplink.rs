@@ -2,18 +2,17 @@ use anyhow::Result;
 use enum_dispatch::enum_dispatch;
 use futures::stream::{StreamExt, TryStreamExt};
 use netlink_packet_route::{
-    rtnl::link::nlas::{Info, Nla},
+    rtnl::link::nlas::Nla,
     LinkMessage, NetlinkHeader, NetlinkMessage, NetlinkPayload, RtnlMessage, IFF_UP, NLM_F_ACK,
     NLM_F_CREATE, NLM_F_EXCL, NLM_F_REQUEST,
 };
-use rtnetlink::{new_connection, try_nl, Handle, NETNS_PATH};
-use serde::{Deserialize, Serialize};
+use rtnetlink::{new_connection, Handle, NETNS_PATH};
 
+use crate::ip::bridge::Bridge;
+use crate::ip::veth::Veth;
 use nix::fcntl::OFlag;
 use nix::sys::stat::Mode;
 use std::path::Path;
-use crate::ip::veth::Veth;
-use crate::ip::bridge::Bridge;
 
 pub fn get_link_name(name: &str) -> Result<LinkMessage> {
     let (connection, handle, _) = new_connection()?;
@@ -47,10 +46,10 @@ impl IPLink {
         let mut header = NetlinkHeader::default();
         self.action.action(&mut header);
         name(&self.name, &mut message);
-        options(self.options.clone(), &mut message);
-        self.link_type.link_type(&mut message);
+        options(self.options.clone(), &mut message)?;
+        self.link_type.link_type(&mut message)?;
 
-        let mut req = match self.action {
+        let req = match self.action {
             Action::Delete => NetlinkMessage::from(RtnlMessage::DelLink(message)),
             Action::Add | Action::Set => NetlinkMessage::from(RtnlMessage::NewLink(message)),
         };

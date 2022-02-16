@@ -1,19 +1,20 @@
-use serde::{Deserialize, Serialize};
-use super::iplink::{name,Opt, options};
-use netlink_packet_route::{LinkMessage,
-                           rtnl::link::nlas::{Nla, Info , InfoKind, InfoData, VethInfo}};
+use super::iplink::{name, options, Opt};
+use netlink_packet_route::{
+    rtnl::link::nlas::{Info, InfoData, InfoKind, Nla, VethInfo},
+    LinkMessage,
+};
 
-use anyhow::Result;
 use super::iplink::LinkTypeTrait;
+use anyhow::Result;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Veth {
-    pub peer_name : String,
-    pub options : Vec<Opt>,
+    pub peer_name: String,
+    pub options: Vec<Opt>,
 }
 
 impl LinkTypeTrait for Veth {
-    fn link_type(&self,  message: &mut LinkMessage) -> Result<()> {
+    fn link_type(&self, message: &mut LinkMessage) -> Result<()> {
         let mut link_info_nlas = vec![Info::Kind(InfoKind::Veth)];
         let mut peer_message = LinkMessage::default();
         name(&self.peer_name, &mut peer_message);
