@@ -53,7 +53,6 @@ impl IPLink {
         };
         self.action.action(&mut req.header);
 
-
         let mut response = handle.request(req)?;
         while let Some(message) = response.next().await {
             if let NetlinkPayload::Error(err) = message.payload {
