@@ -2,9 +2,8 @@ use anyhow::Result;
 use enum_dispatch::enum_dispatch;
 use futures::stream::{StreamExt, TryStreamExt};
 use netlink_packet_route::{
-    rtnl::link::nlas::Nla,
-    LinkMessage, NetlinkHeader, NetlinkMessage, NetlinkPayload, RtnlMessage, IFF_UP, NLM_F_ACK,
-    NLM_F_CREATE, NLM_F_EXCL, NLM_F_REQUEST,
+    rtnl::link::nlas::Nla, LinkMessage, NetlinkHeader, NetlinkMessage, NetlinkPayload, RtnlMessage,
+    IFF_UP, NLM_F_ACK, NLM_F_CREATE, NLM_F_EXCL, NLM_F_REQUEST,
 };
 use rtnetlink::{new_connection, Handle, NETNS_PATH};
 
@@ -19,7 +18,7 @@ pub fn get_link_name(name: &str) -> Result<LinkMessage> {
     tokio::spawn(connection);
 
     futures::executor::block_on(async {
-        let mut links = handle.link().get().set_name_filter(name.parse()?).execute();
+        let mut links = handle.link().get().match_name(name.parse()?).execute();
         if let Some(link) = links.try_next().await? {
             Ok(link)
         } else {
@@ -29,7 +28,7 @@ pub fn get_link_name(name: &str) -> Result<LinkMessage> {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-struct IPLink {
+pub struct IPLink {
     pub action: Action,
     pub name: String,
     pub options: Vec<Opt>,
@@ -43,16 +42,17 @@ pub fn name(name: &str, message: &mut LinkMessage) {
 impl IPLink {
     pub async fn execute(&self, mut handle: Handle) -> Result<()> {
         let mut message = LinkMessage::default();
-        let mut header = NetlinkHeader::default();
-        self.action.action(&mut header);
         name(&self.name, &mut message);
         options(self.options.clone(), &mut message)?;
+
         self.link_type.link_type(&mut message)?;
 
-        let req = match self.action {
+        let mut req = match self.action {
             Action::Delete => NetlinkMessage::from(RtnlMessage::DelLink(message)),
             Action::Add | Action::Set => NetlinkMessage::from(RtnlMessage::NewLink(message)),
         };
+        self.action.action(&mut req.header);
+
 
         let mut response = handle.request(req)?;
         while let Some(message) = response.next().await {
