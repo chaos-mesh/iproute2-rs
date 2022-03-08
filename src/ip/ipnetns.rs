@@ -4,6 +4,7 @@ use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
 use rtnetlink::NETNS_PATH;
 use std::path::Path;
+use std::thread::JoinHandle;
 
 // Fatal : Never add device or do something that change files related with network
 // in filesystem after set_net_ns.
@@ -40,19 +41,32 @@ pub fn set_net_ns(ns_name: String) -> Result<()> {
     Ok(())
 }
 
+// Fatal : Never add device or do something that change files related with network
+// in filesystem in thread_netns_exec.
+pub fn thread_net_ns_exec<F, T>(ns_name:String, f: F) -> JoinHandle<Result<T>>
+    where
+        F: FnOnce() -> T,
+        F: Send + 'static,
+        T: Send + 'static,
+{
+    std::thread::spawn(|| {
+        set_net_ns(ns_name)?;
+        Ok(f())
+    })
+}
+
 #[cfg(test)]
 mod test {
     use std::ffi::OsString;
     use super::set_net_ns;
-    use super::super::iplink;
     use futures::stream::TryStreamExt;
     use netlink_packet_route::LinkMessage;
     use rtnetlink::{new_connection, Error, Handle, NetworkNamespace};
     use std::path::Path;
     use tokio;
     use uuid::Uuid;
-    use crate::ip::iplink::Action;
-    use crate::ip::veth::Veth;
+
+
 
     async fn get_links(handle: Handle) -> Result<Vec<LinkMessage>, Error> {
         let mut links = handle.link().get().execute();
