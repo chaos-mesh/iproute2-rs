@@ -1,17 +1,17 @@
 use anyhow::{anyhow, Result};
-
 use nix::fcntl::{open, OFlag};
-
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::sched::CloneFlags;
 use nix::sys::stat::Mode;
 use nix::sys::statvfs::{statvfs, FsFlags};
 use nix::unistd::{close, fork, ForkResult};
-use rtnetlink::{NetworkNamespace, NETNS_PATH};
+use rtnetlink::NetworkNamespace;
 use std::fs::read_dir;
 use std::path::Path;
 use std::process::exit;
 use std::thread::JoinHandle;
+
+pub const NETNS_RUN_DIR: &str = "/var/run/netns/";
 
 /// Fatal : Never add device or do something that change files related with network
 /// in filesystem after set_net_ns.
@@ -21,7 +21,7 @@ pub fn set_net_ns(ns_name: String) -> Result<()> {
     open_flags.insert(OFlag::O_CLOEXEC);
 
     let fd = match open(
-        Path::new(&format!("{}{}", NETNS_PATH, &ns_name)),
+        Path::new(&format!("{}{}", NETNS_RUN_DIR, &ns_name)),
         open_flags,
         Mode::empty(),
     ) {
@@ -35,9 +35,7 @@ pub fn set_net_ns(ns_name: String) -> Result<()> {
         }
     };
 
-    let mut setns_flags = CloneFlags::empty();
-    setns_flags.insert(CloneFlags::CLONE_NEWNET);
-    if let Err(e) = nix::sched::setns(fd, setns_flags) {
+    if let Err(e) = nix::sched::setns(fd, CloneFlags::CLONE_NEWNET) {
         close(fd)?;
         return Err(anyhow!(
             "setting the network namespace {} failed: {}",
@@ -98,12 +96,10 @@ pub fn bind_etc(ns_name: String) {
 
 pub fn netns_switch(ns_name: String) -> Result<()> {
     set_net_ns(ns_name.clone())?;
-
     // unshare to the new network namespace
-    if let Err(e) = nix::sched::unshare(CloneFlags::CLONE_NEWNET) {
+    if let Err(e) = nix::sched::unshare(CloneFlags::CLONE_NEWNS) {
         return Err(anyhow!("unshare failed: {}", e.to_string()));
     }
-
     let mut mount_flags = MsFlags::empty();
     mount_flags.insert(MsFlags::MS_SLAVE);
     mount_flags.insert(MsFlags::MS_REC);
@@ -135,37 +131,86 @@ pub fn netns_switch(ns_name: String) -> Result<()> {
 
     /* Setup bind mounts for config files in /etc */
     bind_etc(ns_name);
+
     Ok(())
 }
 
-pub fn ip_net_ns_exec<F>(ns_name: String, f: F) -> Result<()>
+// It seems using both tokio & fork will bring a lot of error.
+pub fn ip_net_ns_exec<F, T>(ns_name: String, f: F) -> Result<()>
 where
-    F: FnOnce() -> Result<()>,
+    F: FnOnce() -> Result<T>,
     F: Send + 'static,
+    T: Send + 'static,
 {
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child, .. }) => Ok(NetworkNamespace::parent_process(child)?),
         Ok(ForkResult::Child) => {
-            netns_switch(ns_name).unwrap();
-            f().unwrap();
+            match netns_switch(ns_name) {
+                Err(_) => exit(1),
+                _ => {}
+            };
+            match f() {
+                Err(_) => exit(1),
+                _ => {}
+            };
             exit(0)
         }
         Err(_) => Err(anyhow!("Fork failed")),
     }
 }
 
+pub fn ip_net_ns_add(ns_name: String) -> Result<()> {
+    match unsafe { fork() } {
+        Ok(ForkResult::Parent { child, .. }) => Ok(NetworkNamespace::parent_process(child)?),
+        Ok(ForkResult::Child) => {
+            let netns_path = match NetworkNamespace::child_process(ns_name) {
+                Ok(netns_path) => netns_path,
+                Err(_) => exit(1),
+            };
+            match NetworkNamespace::unshare_processing(netns_path) {
+                Ok(_) => exit(0),
+                _ => exit(1),
+            };
+        }
+        Err(_) => Err(anyhow!("Fork failed")),
+    }
+}
+
+pub fn ip_net_ns_del(ns_name: String) -> Result<()> {
+    let netns_path = format!("{}{}", NETNS_RUN_DIR, ns_name);
+
+    if let Err(e) = nix::mount::umount2(
+        netns_path.clone().as_str(),
+        nix::mount::MntFlags::MNT_DETACH,
+    ) {
+        println!(
+            "Cannot umount namespace file \" {} \": {}",
+            netns_path.clone(),
+            e.to_string()
+        );
+    }
+
+    if let Err(e) = nix::unistd::unlink(netns_path.clone().as_str()) {
+        return Err(anyhow!(
+            "Cannot remove namespace file \"{}\": {}\n",
+            netns_path,
+            e.to_string()
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
-    use super::set_net_ns;
-    use crate::ip::ipnetns::{ip_net_ns_exec, netns_switch};
+    use crate::ip::ipnetns::{ip_net_ns_add, ip_net_ns_del, ip_net_ns_exec, set_net_ns};
     use futures::stream::TryStreamExt;
     use netlink_packet_route::LinkMessage;
-    use rtnetlink::{new_connection, Error, Handle, NetworkNamespace};
+    use rtnetlink::{new_connection, Error, Handle};
     use serial_test::serial;
     use std::ffi::OsString;
     use std::path::Path;
     use tokio;
-    use uuid::Uuid;
 
     async fn get_links(handle: Handle) -> Result<Vec<LinkMessage>, Error> {
         let mut links = handle.link().get().execute();
@@ -188,7 +233,7 @@ mod test {
                 let ns_name_in = ns_name.clone();
                 let (connection, handle, _) = new_connection().unwrap();
                 tokio::spawn(connection);
-                NetworkNamespace::add(ns_name.clone()).await.unwrap();
+                ip_net_ns_add(ns_name.clone()).unwrap();
                 let (msgs_in, devices_in) = std::thread::spawn(move || {
                     tokio::runtime::Builder::new_multi_thread()
                         .enable_all()
@@ -215,7 +260,7 @@ mod test {
                 let msgs_out =
                     futures::executor::block_on(async { get_links(handle).await.unwrap() });
                 let devices_out = std::fs::read_dir(Path::new("/sys/class/net/")).unwrap();
-                NetworkNamespace::del(ns_name.clone()).await.unwrap();
+                ip_net_ns_del(ns_name.clone()).unwrap();
                 assert_ne!(msgs_out, msgs_in);
                 assert_eq!(msgs_in.len(), 1);
 
@@ -231,57 +276,23 @@ mod test {
 
     #[test]
     #[serial]
-    fn test_netns_switch() {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let ns_name = "vnetns0".to_string();
-                NetworkNamespace::add(ns_name.clone()).await.unwrap();
-                netns_switch(ns_name.clone());
-
-                let (connection, handle, _) = new_connection().unwrap();
-                tokio::spawn(connection);
-                assert_eq!(
-                    futures::executor::block_on(async { get_links(handle).await.unwrap() }).len(),
-                    1
-                );
-                NetworkNamespace::del(ns_name.clone()).await.unwrap();
-            })
+    fn test_ip_net_ns_exec() {
+        let ns_name = "vnetns0".to_string();
+        ip_net_ns_add(ns_name.clone()).unwrap();
+        ip_net_ns_exec(ns_name.clone(), || {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let (connection, handle, _) = new_connection()?;
+                    tokio::spawn(connection);
+                    let msgs = get_links(handle).await?;
+                    assert_eq!(msgs.len(), 1);
+                    Ok(())
+                })
+        })
+        .unwrap();
+        ip_net_ns_del(ns_name.clone()).unwrap();
     }
-
-    // #[test]
-    // #[serial]
-    // fn test_ip_net_ns_exec() {
-    //     tokio::runtime::Builder::new_multi_thread()
-    //         .enable_all()
-    //         .build()
-    //         .unwrap()
-    //         .block_on(async {
-    //             let ns_name = "vnetns0".to_string();
-    //             NetworkNamespace::add(ns_name.clone()).await.unwrap();
-    //             ip_net_ns_exec(ns_name.clone(), || {
-    //                 let devices = std::fs::read_dir(Path::new("/sys/class/net/")).unwrap();
-    //                 let devices_names = devices
-    //                     .filter_map(|entry| entry.ok().map(|device| device.file_name()))
-    //                     .collect::<Vec<OsString>>();
-    //                 assert_eq!(devices_names.len(), 1);
-    //                 tokio::runtime::Builder::new_multi_thread()
-    //                     .enable_all()
-    //                     .build()
-    //                     .unwrap()
-    //                     .block_on(async {
-    //                         let (connection, handle, _) = new_connection().unwrap();
-    //                         tokio::spawn(connection);
-    //                         assert_eq!(futures::executor::block_on(async {
-    //                             get_links(handle).await.unwrap()
-    //                         }).len(), 1);
-    //                     });
-    //                 Ok(())
-    //             })
-    //             .unwrap();
-    //             NetworkNamespace::del(ns_name.clone()).await.unwrap();
-    //         });
-    // }
 }
