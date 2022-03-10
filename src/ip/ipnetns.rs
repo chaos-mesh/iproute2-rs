@@ -47,6 +47,7 @@ pub fn set_net_ns(ns_name: String) -> Result<()> {
     Ok(())
 }
 
+/// just setns & exec f()
 /// Fatal : Never add device or do something that change files related with network
 /// in filesystem in thread_netns_exec.
 pub fn thread_net_ns_exec<F, T>(ns_name: String, f: F) -> JoinHandle<Result<T>>
@@ -61,7 +62,7 @@ where
     })
 }
 
-pub fn bind_etc(ns_name: String) {
+fn bind_etc(ns_name: String) {
     if ns_name.len() > 255 {
         return;
     }
@@ -94,7 +95,7 @@ pub fn bind_etc(ns_name: String) {
     });
 }
 
-pub fn netns_switch(ns_name: String) -> Result<()> {
+fn netns_switch(ns_name: String) -> Result<()> {
     set_net_ns(ns_name.clone())?;
     // unshare to the new network namespace
     if let Err(e) = nix::sched::unshare(CloneFlags::CLONE_NEWNS) {
@@ -135,7 +136,8 @@ pub fn netns_switch(ns_name: String) -> Result<()> {
     Ok(())
 }
 
-// It seems using both tokio & fork will bring a lot of error.
+/// It seems using both tokio & fork will bring a lot of error.
+/// ip netns exec name f()
 pub fn ip_net_ns_exec<F, T>(ns_name: String, f: F) -> Result<()>
 where
     F: FnOnce() -> Result<T>,
@@ -145,29 +147,28 @@ where
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child, .. }) => Ok(NetworkNamespace::parent_process(child)?),
         Ok(ForkResult::Child) => {
-            match netns_switch(ns_name) {
-                Err(_) => exit(1),
-                _ => {}
-            };
-            match f() {
-                Err(_) => exit(1),
-                _ => {}
-            };
+            if netns_switch(ns_name).is_err() {
+                exit(1);
+            }
+            if f().is_err() {
+                exit(1);
+            }
             exit(0)
         }
         Err(_) => Err(anyhow!("Fork failed")),
     }
 }
 
+/// ip netns add name
 pub fn ip_net_ns_add(ns_name: String) -> Result<()> {
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child, .. }) => Ok(NetworkNamespace::parent_process(child)?),
         Ok(ForkResult::Child) => {
-            let netns_path = match NetworkNamespace::child_process(ns_name) {
-                Ok(netns_path) => netns_path,
-                Err(_) => exit(1),
-            };
-            match NetworkNamespace::unshare_processing(netns_path) {
+            if NetworkNamespace::child_process(ns_name).is_err() {
+                exit(1);
+            }
+
+            match NetworkNamespace::unshare_processing(netns_path){
                 Ok(_) => exit(0),
                 _ => exit(1),
             };
@@ -176,6 +177,7 @@ pub fn ip_net_ns_add(ns_name: String) -> Result<()> {
     }
 }
 
+/// just ip netns del name
 pub fn ip_net_ns_del(ns_name: String) -> Result<()> {
     let netns_path = format!("{}{}", NETNS_RUN_DIR, ns_name);
 
