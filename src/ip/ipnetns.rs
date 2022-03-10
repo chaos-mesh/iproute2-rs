@@ -164,11 +164,11 @@ pub fn ip_net_ns_add(ns_name: String) -> Result<()> {
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child, .. }) => Ok(NetworkNamespace::parent_process(child)?),
         Ok(ForkResult::Child) => {
-            if NetworkNamespace::child_process(ns_name).is_err() {
-                exit(1);
-            }
-
-            match NetworkNamespace::unshare_processing(netns_path){
+            let netns_path = match NetworkNamespace::child_process(ns_name) {
+                Ok(netns_path) => netns_path,
+                Err(_) => exit(1),
+            };
+            match NetworkNamespace::unshare_processing(netns_path) {
                 Ok(_) => exit(0),
                 _ => exit(1),
             };
