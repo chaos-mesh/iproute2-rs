@@ -90,7 +90,7 @@ fn bind_etc(ns_name: String) {
                 "Bind {} -> {} failed: {}\n",
                 netns_name,
                 etc_name,
-                e.to_string()
+                e
             )
         }
     });
@@ -113,7 +113,7 @@ fn netns_switch(ns_name: String) -> Result<()> {
     }
 
     let mut mount_flags = MsFlags::empty();
-    if let Err(_) = umount2("/sys", MntFlags::MNT_DETACH) {
+    if umount2("/sys", MntFlags::MNT_DETACH).is_err() {
         if let Ok(stat) = statvfs("/sys") {
             if stat.flags().contains(FsFlags::ST_RDONLY) {
                 mount_flags.insert(MsFlags::MS_RDONLY);
@@ -122,7 +122,7 @@ fn netns_switch(ns_name: String) -> Result<()> {
     }
 
     if let Err(e) = mount::<_, _, _, str>(
-        Some(ns_name.clone().as_str()),
+        Some(ns_name.as_str()),
         "/sys",
         Some("sysfs"),
         mount_flags,
@@ -183,17 +183,17 @@ pub fn ip_net_ns_del(ns_name: String) -> Result<()> {
     let netns_path = format!("{}{}", NETNS_RUN_DIR, ns_name);
 
     if let Err(e) = nix::mount::umount2(
-        netns_path.clone().as_str(),
+        netns_path.as_str(),
         nix::mount::MntFlags::MNT_DETACH,
     ) {
         println!(
             "Cannot umount namespace file \" {} \": {}",
-            netns_path.clone(),
-            e.to_string()
+            netns_path,
+            e
         );
     }
 
-    if let Err(e) = nix::unistd::unlink(netns_path.clone().as_str()) {
+    if let Err(e) = nix::unistd::unlink(netns_path.as_str()) {
         return Err(anyhow!(
             "Cannot remove namespace file \"{}\": {}\n",
             netns_path,
@@ -265,7 +265,7 @@ mod test {
                 let msgs_out =
                     futures::executor::block_on(async { get_links(handle).await.unwrap() });
                 let devices_out = std::fs::read_dir(Path::new("/sys/class/net/")).unwrap();
-                ip_net_ns_del(ns_name.clone()).unwrap();
+                ip_net_ns_del(ns_name).unwrap();
                 assert_ne!(msgs_out, msgs_in);
                 assert_eq!(msgs_in.len(), 1);
 
@@ -304,7 +304,7 @@ mod test {
                             })
                     })
                     .unwrap();
-                    ip_net_ns_del(ns_name.clone()).unwrap();
+                    ip_net_ns_del(ns_name).unwrap();
                 })
                 .join()
                 .unwrap();
