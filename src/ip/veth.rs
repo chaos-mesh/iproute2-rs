@@ -1,11 +1,8 @@
-use super::iplink::{name, options, Opt};
-use netlink_packet_route::{
-    rtnl::link::nlas::{Info, InfoData, InfoKind, Nla, VethInfo},
-    LinkMessage,
-};
-
-use super::iplink::LinkTypeTrait;
 use anyhow::Result;
+use netlink_packet_route::rtnl::link::nlas::{Info, InfoData, InfoKind, Nla, VethInfo};
+use netlink_packet_route::LinkMessage;
+
+use super::iplink::{name, options, LinkTypeTrait, Opt};
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Veth {

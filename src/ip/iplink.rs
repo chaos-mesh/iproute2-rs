@@ -1,17 +1,19 @@
+use std::path::Path;
+
 use anyhow::Result;
 use enum_dispatch::enum_dispatch;
 use futures::stream::{StreamExt, TryStreamExt};
+use netlink_packet_route::rtnl::link::nlas::Nla;
 use netlink_packet_route::{
-    rtnl::link::nlas::Nla, LinkMessage, NetlinkHeader, NetlinkMessage, NetlinkPayload, RtnlMessage,
-    IFF_UP, NLM_F_ACK, NLM_F_CREATE, NLM_F_EXCL, NLM_F_REQUEST,
+    LinkMessage, NetlinkHeader, NetlinkMessage, NetlinkPayload, RtnlMessage, IFF_UP, NLM_F_ACK,
+    NLM_F_CREATE, NLM_F_EXCL, NLM_F_REQUEST,
 };
+use nix::fcntl::OFlag;
+use nix::sys::stat::Mode;
 use rtnetlink::{new_connection, Handle, NETNS_PATH};
 
 use crate::ip::bridge::Bridge;
 use crate::ip::veth::Veth;
-use nix::fcntl::OFlag;
-use nix::sys::stat::Mode;
-use std::path::Path;
 
 pub fn get_link_name(name: &str) -> Result<LinkMessage> {
     let (connection, handle, _) = new_connection()?;
@@ -32,7 +34,7 @@ pub struct IPLink {
     pub action: Action,
     pub name: String,
     pub options: Vec<Opt>,
-    pub link_type: LinkTypeEnum,
+    pub link_type: Option<LinkTypeEnum>,
 }
 
 pub fn name(name: &str, message: &mut LinkMessage) {
@@ -40,12 +42,14 @@ pub fn name(name: &str, message: &mut LinkMessage) {
 }
 
 impl IPLink {
-    pub async fn execute(&self, mut handle: Handle) -> Result<()> {
+    pub async fn execute(&self, handle: &mut Handle) -> Result<()> {
         let mut message = LinkMessage::default();
         name(&self.name, &mut message);
         options(self.options.clone(), &mut message)?;
 
-        self.link_type.link_type(&mut message)?;
+        self.link_type
+            .as_ref()
+            .map_or(Ok(()), |link_type| link_type.link_type(&mut message))?;
 
         let mut req = match self.action {
             Action::Delete => NetlinkMessage::from(RtnlMessage::DelLink(message)),
@@ -133,4 +137,41 @@ pub fn options(opts: Vec<Opt>, message: &mut LinkMessage) -> Result<()> {
         opt.opt(message)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use rtnetlink::new_connection;
+
+    use crate::ip::iplink::{Action, IPLink, LinkTypeEnum};
+    use crate::ip::veth::Veth;
+
+    #[tokio::test]
+    async fn test_veth() {
+        let (connection, mut handle, _) = new_connection().unwrap();
+        tokio::spawn(connection);
+
+        IPLink {
+            action: Action::Add,
+            name: "v0".to_string(),
+            options: vec![],
+            link_type: Some(LinkTypeEnum::Veth(Veth {
+                peer_name: "v1".to_string(),
+                options: vec![],
+            })),
+        }
+        .execute(&mut handle)
+        .await
+        .unwrap();
+
+        IPLink {
+            action: Action::Delete,
+            name: "v0".to_string(),
+            options: vec![],
+            link_type: None,
+        }
+        .execute(&mut handle)
+        .await
+        .unwrap();
+    }
 }

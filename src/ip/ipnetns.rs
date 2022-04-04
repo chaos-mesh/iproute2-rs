@@ -1,3 +1,8 @@
+use std::fs::read_dir;
+use std::path::Path;
+use std::process::exit;
+use std::thread::JoinHandle;
+
 use anyhow::{anyhow, Result};
 use nix::fcntl::{open, OFlag};
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
@@ -6,10 +11,6 @@ use nix::sys::stat::Mode;
 use nix::sys::statvfs::{statvfs, FsFlags};
 use nix::unistd::{close, fork, ForkResult};
 use rtnetlink::NetworkNamespace;
-use std::fs::read_dir;
-use std::path::Path;
-use std::process::exit;
-use std::thread::JoinHandle;
 
 pub const NETNS_RUN_DIR: &str = "/var/run/netns/";
 
@@ -205,14 +206,16 @@ pub fn ip_net_ns_del(ns_name: String) -> Result<()> {
 
 #[cfg(test)]
 mod test {
-    use crate::ip::ipnetns::{ip_net_ns_add, ip_net_ns_del, ip_net_ns_exec, set_net_ns};
+    use std::ffi::OsString;
+    use std::path::Path;
+
     use futures::stream::TryStreamExt;
     use netlink_packet_route::LinkMessage;
     use rtnetlink::{new_connection, Error, Handle};
     use serial_test::serial;
-    use std::ffi::OsString;
-    use std::path::Path;
     use tokio;
+
+    use crate::ip::ipnetns::{ip_net_ns_add, ip_net_ns_del, ip_net_ns_exec, set_net_ns};
 
     async fn get_links(handle: Handle) -> Result<Vec<LinkMessage>, Error> {
         let mut links = handle.link().get().execute();
@@ -279,22 +282,32 @@ mod test {
     #[test]
     #[serial]
     fn test_ip_net_ns_exec() {
-        let ns_name = "vnetns0".to_string();
-        ip_net_ns_add(ns_name.clone()).unwrap();
-        ip_net_ns_exec(ns_name.clone(), || {
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async {
-                    let (connection, handle, _) = new_connection()?;
-                    tokio::spawn(connection);
-                    let msgs = get_links(handle).await?;
-                    assert_eq!(msgs.len(), 1);
-                    Ok(())
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                std::thread::spawn(|| {
+                    let ns_name = "vnetns0".to_string();
+                    ip_net_ns_add(ns_name.clone()).unwrap();
+                    ip_net_ns_exec(ns_name.clone(), || {
+                        tokio::runtime::Builder::new_multi_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap()
+                            .block_on(async {
+                                let (connection, handle, _) = new_connection()?;
+                                tokio::spawn(connection);
+                                let msgs = get_links(handle).await?;
+                                assert_eq!(msgs.len(), 1);
+                                Ok(())
+                            })
+                    })
+                    .unwrap();
+                    ip_net_ns_del(ns_name.clone()).unwrap();
                 })
-        })
-        .unwrap();
-        ip_net_ns_del(ns_name.clone()).unwrap();
+                .join()
+                .unwrap();
+            });
     }
 }

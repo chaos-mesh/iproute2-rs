@@ -1,11 +1,9 @@
+use anyhow::Result;
+use netlink_packet_route::rtnl::link::nlas::{Info, InfoData, InfoKind, Nla};
 use netlink_packet_route::rtnl::nlas::link::InfoBridge;
-use netlink_packet_route::{
-    rtnl::link::nlas::{Info, InfoData, InfoKind, Nla},
-    LinkMessage,
-};
+use netlink_packet_route::LinkMessage;
 
 use super::iplink::LinkTypeTrait;
-use anyhow::Result;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Bridge {
