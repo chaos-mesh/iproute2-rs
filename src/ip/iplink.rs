@@ -55,7 +55,11 @@ impl IPLink {
             Action::Delete => NetlinkMessage::from(RtnlMessage::DelLink(message)),
             Action::Add | Action::Set => NetlinkMessage::from(RtnlMessage::NewLink(message)),
         };
-        self.action.action(&mut req.header);
+        if self.action == Action::Add {
+            req.header.flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_EXCL | NLM_F_CREATE
+        } else {
+            req.header.flags = NLM_F_REQUEST | NLM_F_ACK
+        }
 
         let mut response = handle.request(req)?;
         while let Some(message) = response.next().await {
@@ -73,15 +77,6 @@ pub enum Action {
     Add,
     Delete,
     Set,
-}
-
-impl Action {
-    pub fn action(&self, header: &mut NetlinkHeader) {
-        match self {
-            Action::Add => header.flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_EXCL | NLM_F_CREATE,
-            _ => header.flags = NLM_F_REQUEST | NLM_F_ACK,
-        }
-    }
 }
 
 #[enum_dispatch]
