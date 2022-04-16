@@ -1,7 +1,6 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use futures::{StreamExt, TryStreamExt};
 use netlink_packet_route::constants::*;
-use netlink_packet_route::route::Nla;
 use netlink_packet_route::{NetlinkMessage, NetlinkPayload, RouteMessage, RtnlMessage};
 use rtnetlink::{Handle, IpVersion};
 
@@ -49,7 +48,7 @@ pub async fn get_routes(handle: &Handle, ip_version: IpVersion) -> Result<Vec<Ro
 
 pub async fn del_routes(handle: Handle, route_msg: RouteMessage) -> Result<()> {
     handle.route().del(route_msg).execute().await?;
-    return Ok(());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -57,7 +56,7 @@ mod test {
     use netlink_packet_route::RouteMessage;
     use rtnetlink::{new_connection, IpVersion};
 
-    use crate::ip::iproute::{get_routes, try_get_default_route, Action, IPRoute};
+    use crate::ip::iproute::{get_routes, Action, IPRoute};
 
     #[tokio::test]
     async fn test_dump_addresses() {
