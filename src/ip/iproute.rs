@@ -46,7 +46,7 @@ pub async fn get_routes(handle: &Handle, ip_version: IpVersion) -> Result<Vec<Ro
     Ok(routes)
 }
 
-pub async fn del_routes(handle: Handle, route_msg: RouteMessage) -> Result<()> {
+pub async fn del_routes(handle: &Handle, route_msg: RouteMessage) -> Result<()> {
     handle.route().del(route_msg).execute().await?;
     Ok(())
 }
