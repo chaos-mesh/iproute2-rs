@@ -1,7 +1,9 @@
+use anyhow::{anyhow, Result};
+use futures::{StreamExt, TryStreamExt};
+use netlink_packet_route::constants::*;
+use netlink_packet_route::route::Nla;
+use netlink_packet_route::{NetlinkMessage, NetlinkPayload, RouteMessage, RtnlMessage};
 use rtnetlink::{Handle, IpVersion};
-use anyhow::Result;
-use futures::{TryStreamExt, StreamExt};
-use netlink_packet_route::{constants::*, RouteMessage, NetlinkMessage, RtnlMessage, NetlinkPayload};
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct IPRoute {
@@ -12,14 +14,14 @@ pub struct IPRoute {
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Action {
     Add,
-    Del
+    Del,
 }
 
 impl IPRoute {
     pub async fn execute(&self, handle: &mut Handle) -> Result<()> {
         let mut req = match self.action {
             Action::Del => NetlinkMessage::from(RtnlMessage::DelRoute(self.msg.clone())),
-            Action::Add  => NetlinkMessage::from(RtnlMessage::NewRoute(self.msg.clone())),
+            Action::Add => NetlinkMessage::from(RtnlMessage::NewRoute(self.msg.clone())),
         };
 
         if self.action == Action::Add {
@@ -39,32 +41,34 @@ impl IPRoute {
     }
 }
 
-async fn get_routes(handle: &Handle, ip_version: IpVersion) -> Result<Vec<RouteMessage>> {
+pub async fn get_routes(handle: &Handle, ip_version: IpVersion) -> Result<Vec<RouteMessage>> {
     let routes_exec = handle.route().get(ip_version).execute();
     let routes: Vec<RouteMessage> = routes_exec.try_collect().await?;
     Ok(routes)
 }
 
-async fn del_routes(handle: Handle, route_msg: RouteMessage) -> Result<()> {
+pub async fn del_routes(handle: Handle, route_msg: RouteMessage) -> Result<()> {
     handle.route().del(route_msg).execute().await?;
-    return Ok(())
+    return Ok(());
 }
-
 
 #[cfg(test)]
 mod test {
     use netlink_packet_route::RouteMessage;
-    use rtnetlink::{IpVersion, new_connection};
-    use crate::ip::iproute::{Action, get_routes, IPRoute};
+    use rtnetlink::{new_connection, IpVersion};
+
+    use crate::ip::iproute::{get_routes, try_get_default_route, Action, IPRoute};
 
     #[tokio::test]
     async fn test_dump_addresses() {
         let (connection, mut handle, _) = new_connection().unwrap();
         tokio::spawn(connection);
 
-        let routes = get_routes(&handle,IpVersion::V4).await.unwrap();
-        let mut routes: Vec<RouteMessage> = routes.
-            into_iter().filter(|route| route.header.table != 255).collect();
+        let routes = get_routes(&handle, IpVersion::V4).await.unwrap();
+        let mut routes: Vec<RouteMessage> = routes
+            .into_iter()
+            .filter(|route| route.header.table != 255)
+            .collect();
 
         for route in &routes {
             handle.route().del(route.clone()).execute().await.unwrap();
@@ -73,10 +77,13 @@ mod test {
         routes.reverse();
 
         for route in routes {
-            IPRoute{
+            IPRoute {
                 action: Action::Add,
                 msg: route.clone(),
-            }.execute(&mut handle).await.unwrap();
+            }
+            .execute(&mut handle)
+            .await
+            .unwrap();
         }
     }
 }

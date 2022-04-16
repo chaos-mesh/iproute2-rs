@@ -5,8 +5,8 @@ use enum_dispatch::enum_dispatch;
 use futures::stream::{StreamExt, TryStreamExt};
 use netlink_packet_route::rtnl::link::nlas::Nla;
 use netlink_packet_route::{
-    LinkMessage, NetlinkMessage, NetlinkPayload, RtnlMessage, IFF_UP, NLM_F_ACK,
-    NLM_F_CREATE, NLM_F_EXCL, NLM_F_REQUEST,
+    LinkMessage, NetlinkMessage, NetlinkPayload, RtnlMessage, IFF_UP, NLM_F_ACK, NLM_F_CREATE,
+    NLM_F_EXCL, NLM_F_REQUEST,
 };
 use nix::fcntl::OFlag;
 use nix::sys::stat::Mode;

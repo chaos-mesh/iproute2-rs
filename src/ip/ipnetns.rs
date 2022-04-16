@@ -86,12 +86,7 @@ fn bind_etc(ns_name: String) {
             MsFlags::MS_BIND,
             None,
         ) {
-            println!(
-                "Bind {} -> {} failed: {}\n",
-                netns_name,
-                etc_name,
-                e
-            )
+            println!("Bind {} -> {} failed: {}\n", netns_name, etc_name, e)
         }
     });
 }
@@ -182,15 +177,8 @@ pub fn ip_net_ns_add(ns_name: String) -> Result<()> {
 pub fn ip_net_ns_del(ns_name: String) -> Result<()> {
     let netns_path = format!("{}{}", NETNS_RUN_DIR, ns_name);
 
-    if let Err(e) = nix::mount::umount2(
-        netns_path.as_str(),
-        nix::mount::MntFlags::MNT_DETACH,
-    ) {
-        println!(
-            "Cannot umount namespace file \" {} \": {}",
-            netns_path,
-            e
-        );
+    if let Err(e) = nix::mount::umount2(netns_path.as_str(), nix::mount::MntFlags::MNT_DETACH) {
+        println!("Cannot umount namespace file \" {} \": {}", netns_path, e);
     }
 
     if let Err(e) = nix::unistd::unlink(netns_path.as_str()) {
